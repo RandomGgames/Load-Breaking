@@ -1,0 +1,52 @@
+name: Create pack release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (e.g. v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release pack
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Zip files for release
+        env:
+          tag: ${{ github.event.inputs.tag }}
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          tag="${{ inputs.tag }}"
+          zip_name="${repo_name}-${tag#v}.zip"
+
+          # Check required file
+          [ -f pack.mcmeta ] || { echo "Error: pack.mcmeta not found"; exit 1; }
+
+          # Start zip with required file
+          zip -r "$zip_name" pack.mcmeta || true
+
+          # Add optional folders if they exist
+          [ -d data ] && zip -r "$zip_name" data || true
+          [ -d assets ] && zip -r "$zip_name" assets || true
+
+          # Add pack.png if it exists
+          [ -f pack.png ] && zip -u "$zip_name" pack.png || true
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.event.inputs.tag }}
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          gh release create "$tag" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="${repo_name} ${tag#v}" \
+              --generate-notes \
+              "$repo_name-${tag#v}.zip"
