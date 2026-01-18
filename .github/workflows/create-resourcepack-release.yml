@@ -1,4 +1,4 @@
-name: Create Resourcepack Release
+name: Create Resource Pack Release
 
 on:
   workflow_dispatch:
