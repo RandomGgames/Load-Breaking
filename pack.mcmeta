@@ -1,23 +1,26 @@
 {
     "pack": {
-        "pack_format": 69,
-        "supported_formats": {
-            "min_inclusive": 34,
-            "max_inclusive": 69
-        },
-        "description": [
-            {
-                "text": "Loading bar break animation",
-                "color": "yellow"
-            },
-            {
-                "text": "\nCreated By: ",
-                "color": "gold"
-            },
-            {
-                "text": "RandomGgames",
-                "color": "#00ff00"
-            }
+        "min_format": [
+            82,
+            0
+        ],
+        "max_format": [
+            75,
+            0
         ]
-    }
+    },
+    "description": [
+        {
+            "text": "Loading bar break animation",
+            "color": "yellow"
+        },
+        {
+            "text": "\nCreated By: ",
+            "color": "gold"
+        },
+        {
+            "text": "RandomGgames",
+            "color": "#00ff00"
+        }
+    ]
 }
