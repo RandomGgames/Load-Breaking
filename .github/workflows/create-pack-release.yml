@@ -1,72 +1,179 @@
-name: Create pack release
+name: Create Datapack Release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name (e.g., v1.0.0)"
+        description: "Tag name (e.g., v1.0.0 or 1.0.0)"
         required: true
         type: string
       versions:
-        description: 'Game versions (e.g., 1.21.5 or 1.21-1.21.10'
+        description: |
+          Minecraft versions.
+          Examples:
+            1.21.9
+            1.21.9-1.21.11
+            1.21.7,1.21.9-1.21.11
         required: true
         type: string
 
 permissions:
   contents: write
 
-env:
-  # Normalize tag once for the entire workflow
-  NORMALIZED_TAG: ${{ github.event.inputs.tag }}
-
 jobs:
   normalize-tag:
-    name: Normalize tag
     runs-on: ubuntu-22.04
     outputs:
-      tag: ${{ steps.set-tag.outputs.tag }}
+      base_version: ${{ steps.out.outputs.base_version }}
+      full_tag: ${{ steps.out.outputs.full_tag }}
     steps:
-      - id: set-tag
+      - id: out
         run: |
-          TAG="${{ github.event.inputs.tag }}"
-          if [[ "$TAG" != v* ]]; then
-            TAG="v$TAG"
-          fi
-          echo "Normalized tag is $TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          inp="${{ github.event.inputs.tag }}"
+          [[ "$inp" =~ ^v ]] || inp="v$inp"
+          echo "base_version=${inp#v}" >> "$GITHUB_OUTPUT"
+          echo "full_tag=${inp#v}" >> "$GITHUB_OUTPUT"  # GitHub release tag without 'v'
+
+  prepare-versions:
+    runs-on: ubuntu-22.04
+    outputs:
+      mc_versions: ${{ steps.out.outputs.mc_versions }}
+    steps:
+      - id: out
+        run: |
+          set -e
+          INPUT="$(echo "${{ github.event.inputs.versions }}" | tr -d ' ')"
+
+          expand() {
+            local a="$1" b="$2"
+            [[ "${a%.*}" == "${b%.*}" ]] || exit 1
+            for ((i=${a##*.}; i<=${b##*.}; i++)); do
+              echo "${a%.*}.$i"
+            done
+          }
+
+          OUT=()
+          IFS=',' read -ra PARTS <<< "$INPUT"
+          for p in "${PARTS[@]}"; do
+            if [[ "$p" == *-* ]]; then
+              while read -r v; do OUT+=("$v"); done < <(
+                expand "${p%%-*}" "${p##*-}"
+              )
+            else
+              OUT+=("$p")
+            fi
+          done
+
+          {
+            echo "mc_versions<<EOF"
+            for v in "${OUT[@]}"; do echo "$v"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  build-zip:
+    runs-on: ubuntu-22.04
+    needs: normalize-tag
+    outputs:
+      zip_name: ${{ steps.zip.outputs.archive_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: zip
+        run: |
+          set -e
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          ZIP="${REPO_NAME}-${{ needs.normalize-tag.outputs.base_version }}.zip"
+
+          [ -f pack.mcmeta ] || { echo "::error ::pack.mcmeta not found at repo root"; exit 1; }
+
+          rm -f "$ZIP"
+          zip -r "$ZIP" pack.mcmeta
+          [ -d data ] && zip -r "$ZIP" data
+          [ -d assets ] && zip -r "$ZIP" assets
+          [ -f pack.png ] && zip -u "$ZIP" pack.png
+
+          echo "::group::ZIP CONTENTS"
+          unzip -l "$ZIP"
+          echo "::endgroup::"
+
+          echo "archive_name=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datapack
+          path: ${{ steps.zip.outputs.archive_name }}
+
+  generate-changelog:
+    runs-on: ubuntu-22.04
+    needs: normalize-tag
+    outputs:
+      CHANGELOG: ${{ steps.out.outputs.CHANGELOG }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Ensure all tags are fetched
+
+      - id: out
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # <--- Required for gh CLI
+        run: |
+          set -e
+          VERSION="${{ needs.normalize-tag.outputs.base_version }}"
+
+          # Use GitHub CLI to generate the detailed changelog as GitHub would
+          gh release create "${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "TEMP" \
+            --generate-notes \
+            --draft
+
+          CHANGELOG=$(gh release view "${VERSION}" --repo "$GITHUB_REPOSITORY" --json body -q '.body')
+
+          # Delete temporary draft release (we only want the changelog for now)
+          gh release delete "${VERSION}" --repo "$GITHUB_REPOSITORY" --yes
+
+          # Write multi-line changelog safely to GitHub output
+          cat <<EOF >> "$GITHUB_OUTPUT"
+          CHANGELOG<<EOF2
+          $CHANGELOG
+          EOF2
+          EOF
 
   release:
-    needs: normalize-tag
     runs-on: ubuntu-22.04
+    needs: [normalize-tag, prepare-versions, build-zip, generate-changelog]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: datapack
 
-      - name: Zip files for release
-        run: |
-          tag="${{ needs.normalize-tag.outputs.tag }}"
-          repo_name="${GITHUB_REPOSITORY#*/}"
-          zip_name="${repo_name}-${tag#v}.zip"
-
-          # Required file
-          [ -f pack.mcmeta ] || { echo "Error: pack.mcmeta not found"; exit 1; }
-
-          # Optional folders
-          zip -r "$zip_name" pack.mcmeta || true
-          [ -d data ] && zip -r "$zip_name" data || true
-          [ -d assets ] && zip -r "$zip_name" assets || true
-          [ -f pack.png ] && zip -u "$zip_name" pack.png || true
-
-      - name: Create release
+      - name: Create GitHub release with detailed changelog
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${{ needs.normalize-tag.outputs.tag }}"
-          repo_name="${GITHUB_REPOSITORY#*/}"
-          game_versions="${{ github.event.inputs.versions }}"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          VERSION="${{ needs.normalize-tag.outputs.base_version }}"
+          VERSIONS="${{ github.event.inputs.versions }}"
+          ZIP_FILE="${{ needs.build-zip.outputs.zip_name }}"
+          CHANGELOG="${{ needs.generate-changelog.outputs.CHANGELOG }}"
 
-          gh release create "$tag" \
-              --repo="$GITHUB_REPOSITORY" \
-              --title="${repo_name} v${tag#v} for ${game_versions}" \
-              --generate-notes \
-              "$repo_name-${tag#v}.zip"
+          # Single GitHub release with detailed changelog
+          gh release create "$VERSION" \
+            --repo="$GITHUB_REPOSITORY" \
+            --title="${REPO_NAME} ${VERSION} for ${VERSIONS}" \
+            --notes "$CHANGELOG" \
+            --latest \
+            "$ZIP_FILE"
+
+      - uses: Kira-NT/mc-publish@v3
+        with:
+          name: ${{ needs.normalize-tag.outputs.base_version }}
+          version: ${{ needs.normalize-tag.outputs.base_version }}
+          version-type: release
+          game-versions: ${{ needs.prepare-versions.outputs.mc_versions }}
+          loaders: datapack
+          files: ${{ needs.build-zip.outputs.zip_name }}
+          modrinth-changelog: ${{ needs.generate-changelog.outputs.CHANGELOG }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-id: ${{ vars.MODRINTH_ID }}
