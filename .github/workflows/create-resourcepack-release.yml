@@ -1,4 +1,4 @@
-name: Create Datapack Release
+name: Create Resourcepack Release
 
 on:
   workflow_dispatch:
@@ -100,7 +100,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: datapack
+          name: vanilla
           path: ${{ steps.zip.outputs.archive_name }}
 
   generate-changelog:
@@ -145,7 +145,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: datapack
+          name: vanilla
 
       - name: Create GitHub release with detailed changelog
         env:
@@ -171,7 +171,7 @@ jobs:
           version: ${{ needs.normalize-tag.outputs.base_version }}
           version-type: release
           game-versions: ${{ needs.prepare-versions.outputs.mc_versions }}
-          loaders: datapack
+          loaders: vanilla
           files: ${{ needs.build-zip.outputs.zip_name }}
           modrinth-changelog: ${{ needs.generate-changelog.outputs.CHANGELOG }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
