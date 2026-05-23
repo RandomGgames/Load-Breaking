@@ -131,7 +131,7 @@ def main(config: Config):
 
     file_name = Path(f"{pack_name}-{pack_version}.zip")
 
-    release_title = Path(f"{pack_name} {pack_version} for {game_versions}.zip")
+    release_title = Path(f"{pack_name} {pack_version} for {game_versions}")
     logger.debug("Release title: %s", release_title)
 
     zip_files(files=files_to_zip, zip_path=file_name)
