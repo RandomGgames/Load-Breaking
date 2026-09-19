@@ -1,14 +1,10 @@
 {
     "pack": {
-        "min_format": [
-            76
-        ],
-        "max_format": [
-            84
-        ],
+        "min_format": 85,
+        "max_format": 95,
         "description": [
             {
-                "text": "Loading bar break animation",
+                "text": "Load Breaking",
                 "color": "yellow"
             },
             {
